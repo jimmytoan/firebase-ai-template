@@ -2,6 +2,7 @@ const { onCall } = require("firebase-functions/v2/https")
 const { initializeApp } = require("firebase-admin/app")
 const { getStorage } = require("firebase-admin/storage")
 const { GoogleGenerativeAI } = require("@google/generative-ai")
+const pdfParse = require('pdf-parse')
 
 // Initialize Firebase Admin
 initializeApp()
@@ -37,25 +38,39 @@ async function analyzeImage(imageBytes) {
   }
 }
 
-async function analyzePDF(pdfBytes) {
+async function analyzePDF(pdfBuffer) {
   try {
     console.log('Starting PDF analysis')
+    
+    // Parse PDF to text
+    console.log('Parsing PDF content')
+    const pdfData = await pdfParse(pdfBuffer)
+    const pdfText = pdfData.text
+    console.log('PDF parsed successfully, text length:', pdfText.length)
+
+    // Truncate text if too long (Gemini has token limits)
+    const maxChars = 30000
+    const truncatedText = pdfText.length > maxChars 
+      ? pdfText.substring(0, maxChars) + '...(truncated)'
+      : pdfText
+    
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-8b" })
     console.log('Gemini model loaded for PDF analysis')
     
-    const pdfText = pdfBytes.toString('utf-8')
-    console.log('PDF converted to text, length:', pdfText.length)
+    const prompt = `Please provide a comprehensive summary of the following text, including key points and main ideas:
+
+Text to analyze:
+${truncatedText}`
     
-    const prompt = "Please provide a concise summary of the following text:"
-    
-    const result = await model.generateContent([
-      `${prompt}\n\n${pdfText}`
-    ])
+    const result = await model.generateContent([prompt])
     
     console.log('PDF analysis completed successfully')
     return result.response.text()
   } catch (error) {
     console.error('Error in analyzePDF:', error)
+    if (error.name === 'InvalidPDFException') {
+      throw new Error('Invalid or corrupted PDF file')
+    }
     throw error
   }
 }
